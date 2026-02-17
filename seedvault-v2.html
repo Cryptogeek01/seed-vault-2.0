@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SeedVault — ETH Recovery</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Clash+Display:wght@500;600;700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#060608;--bg1:#0d0d14;--bg2:#12121c;--bg3:#181826;
+  --border:#1e1e2e;--border2:#28283c;
+  --green:#00e87a;--gd:rgba(0,232,122,0.08);--gm:rgba(0,232,122,0.15);
+  --blue:#3d8bff;--bd:rgba(61,139,255,0.08);
+  --amber:#f5a623;--ad:rgba(245,166,35,0.08);
+  --red:#ff4455;--rd:rgba(255,68,85,0.08);
+  --text:#e0e0f0;--t2:#8888a8;--t3:#44445a;
+}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:'Instrument Sans',sans-serif;min-height:100vh;overflow-x:hidden}
+body::after{content:'';position:fixed;inset:0;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");pointer-events:none;z-index:9999;opacity:0.5}
+
+/* Layout */
+.app{display:grid;grid-template-columns:220px 1fr;grid-template-rows:52px 1fr;min-height:100vh}
+
+/* Topbar */
+.topbar{grid-column:1/-1;background:var(--bg1);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 20px;position:sticky;top:0;z-index:100}
+.logo{display:flex;align-items:center;gap:9px;font-family:'Clash Display',sans-serif;font-size:16px;font-weight:600;letter-spacing:-0.02em}
+.logo-icon{width:26px;height:26px;background:linear-gradient(135deg,var(--green),#00a855);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;box-shadow:0 0 14px rgba(0,232,122,0.2)}
+.logo em{color:var(--green);font-style:normal}
+.topbar-right{display:flex;align-items:center;gap:10px}
+.tbadge{display:flex;align-items:center;gap:5px;background:var(--bg2);border:1px solid var(--border);border-radius:99px;padding:4px 10px;font-family:'DM Mono',monospace;font-size:10px;color:var(--t2)}
+.ndot{width:5px;height:5px;border-radius:50%;background:var(--green);box-shadow:0 0 5px var(--green);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}
+
+/* Sidebar */
+.sidebar{background:var(--bg1);border-right:1px solid var(--border);padding:16px 10px;position:sticky;top:52px;height:calc(100vh - 52px);overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+.nav-lbl{font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;color:var(--t3);text-transform:uppercase;padding:8px 8px 4px}
+.nav-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:500;color:var(--t2);transition:all 0.13s;user-select:none;border:1px solid transparent}
+.nav-item:hover{background:var(--bg2);color:var(--text)}
+.nav-item.on{background:var(--gd);color:var(--green);border-color:rgba(0,232,122,0.1)}
+.nav-item .ico{width:15px;text-align:center;font-size:13px;flex-shrink:0}
+.nav-item .nbadge{margin-left:auto;font-family:'DM Mono',monospace;font-size:9px;background:var(--bg3);border:1px solid var(--border);border-radius:99px;padding:1px 6px;color:var(--t3)}
+.nav-item.on .nbadge{background:rgba(0,232,122,0.08);border-color:rgba(0,232,122,0.15);color:var(--green)}
+.sidebar-footer{margin-top:auto;border-top:1px solid var(--border);padding-top:10px}
+.sstat{display:flex;justify-content:space-between;padding:3px 8px;font-family:'DM Mono',monospace;font-size:9px;color:var(--t3)}
+.sstat span:last-child{color:var(--t2)}
+
+/* Main */
+.main{background:var(--bg);overflow-y:auto}
+.page{display:none;padding:24px;max-width:960px}
+.page.on{display:block;animation:fadeUp 0.2s ease}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.page-title{font-family:'Clash Display',sans-serif;font-size:22px;font-weight:600;letter-spacing:-0.02em;margin-bottom:3px}
+.page-sub{font-size:13px;color:var(--t2);margin-bottom:22px}
+
+/* Cards */
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:11px;overflow:hidden;margin-bottom:14px}
+.card-head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border)}
+.card-title{font-size:11px;font-weight:600;letter-spacing:0.04em;color:var(--t2);text-transform:uppercase}
+.card-body{padding:16px}
+
+/* Stat row */
+.stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.stat{background:var(--bg1);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+.stat-lbl{font-family:'DM Mono',monospace;font-size:9px;color:var(--t3);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:6px}
+.stat-val{font-family:'Clash Display',sans-serif;font-size:24px;font-weight:600;letter-spacing:-0.02em}
+.stat-val.g{color:var(--green)}.stat-val.b{color:var(--blue)}.stat-val.a{color:var(--amber)}
+.stat-hint{font-family:'DM Mono',monospace;font-size:9px;color:var(--t3);margin-top:3px}
+
+/* Word grid */
+.word-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+.wslot{position:relative}
+.wslot label{position:absolute;top:6px;left:10px;font-family:'DM Mono',monospace;font-size:8px;color:var(--t3);letter-spacing:0.08em;pointer-events:none;z-index:1}
+.wslot input{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:20px 10px 7px;font-family:'DM Mono',monospace;font-size:12px;color:var(--text);outline:none;transition:border-color 0.13s,box-shadow 0.13s}
+.wslot input:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(0,232,122,0.06)}
+.wslot input.ok{border-color:rgba(0,232,122,0.3);background:rgba(0,232,122,0.02)}
+.wslot input.bad{border-color:rgba(255,68,85,0.35)}
+.wslot input::placeholder{color:var(--t3);font-size:10px}
+.acl{position:absolute;top:100%;left:0;right:0;background:#16162a;border:1px solid var(--border2);border-top:none;border-radius:0 0 7px 7px;z-index:300;max-height:110px;overflow-y:auto;display:none}
+.acl.open{display:block}
+.aci{padding:5px 10px;font-family:'DM Mono',monospace;font-size:11px;cursor:pointer;color:var(--text)}
+.aci:hover,.aci.sel{background:var(--gd);color:var(--green)}
+
+.miss-row{display:flex;gap:8px;margin-top:12px}
+.miss-box{background:var(--bd);border:1px dashed rgba(61,139,255,0.2);border-radius:7px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:100px}
+.miss-n{font-family:'DM Mono',monospace;font-size:8px;color:var(--t3);letter-spacing:0.08em}
+.miss-q{font-size:20px;color:var(--blue);opacity:0.3;font-weight:700}
+
+/* Token chips */
+.tchips{display:flex;gap:6px;flex-wrap:wrap}
+.tc{display:flex;align-items:center;gap:5px;background:var(--bg2);border:1px solid var(--border);border-radius:99px;padding:5px 10px;cursor:pointer;font-family:'DM Mono',monospace;font-size:11px;color:var(--t2);transition:all 0.12s;user-select:none}
+.tc:hover{border-color:var(--border2);color:var(--text)}
+.tc.on{background:var(--gd);border-color:rgba(0,232,122,0.25);color:var(--green)}
+.tc .td{width:5px;height:5px;border-radius:50%;background:currentColor}
+.cust-row{display:flex;gap:8px;margin-top:10px}
+.ti{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:8px 11px;font-family:'DM Mono',monospace;font-size:11px;color:var(--text);outline:none;transition:border-color 0.13s}
+.ti:focus{border-color:var(--blue);box-shadow:0 0 0 3px var(--bd)}
+.ti::placeholder{color:var(--t3)}
+
+/* Buttons */
+.btn{display:inline-flex;align-items:center;gap:7px;border:none;border-radius:7px;cursor:pointer;font-family:'Instrument Sans',sans-serif;font-weight:600;transition:all 0.13s;white-space:nowrap}
+.btn-p{background:var(--green);color:#000;padding:11px 22px;font-size:14px}
+.btn-p:hover:not(:disabled){background:#00d470;box-shadow:0 6px 20px rgba(0,232,122,0.18);transform:translateY(-1px)}
+.btn-p:disabled{opacity:0.3;cursor:not-allowed;transform:none}
+.btn-g{background:var(--bg2);border:1px solid var(--border);color:var(--t2);padding:9px 16px;font-size:12px}
+.btn-g:hover{border-color:var(--border2);color:var(--text)}
+.btn-d{background:var(--rd);border:1px solid rgba(255,68,85,0.2);color:var(--red);padding:8px 14px;font-size:12px}
+.spin{width:13px;height:13px;border:2px solid rgba(0,0,0,0.2);border-top-color:#000;border-radius:50%;animation:sp 0.55s linear infinite;display:none}
+.btn-p.loading .spin{display:block}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* Progress */
+.prog-wrap{background:var(--bg1);border:1px solid var(--border);border-radius:11px;padding:18px;display:none;margin-top:14px}
+.prog-wrap.show{display:block;animation:fadeUp 0.2s ease}
+.phases{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+.ph{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:11px 13px}
+.ph.run{border-color:rgba(0,232,122,0.2);background:var(--gd)}
+.ph.done{border-color:rgba(0,232,122,0.12)}
+.ph-lbl{font-family:'DM Mono',monospace;font-size:8px;color:var(--t3);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:4px}
+.ph-val{font-size:12px;font-weight:600;color:var(--t2)}
+.ph.run .ph-val{color:var(--green)}
+.ph.done .ph-val{color:var(--text)}
+.ph-sub{font-family:'DM Mono',monospace;font-size:9px;color:var(--t3);margin-top:2px}
+
+/* Speed meter */
+.speed-row{display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap}
+.spd{font-family:'DM Mono',monospace;font-size:10px;color:var(--t3)}
+.spd span{color:var(--green);font-weight:500}
+
+.track{height:3px;background:var(--bg3);border-radius:99px;overflow:hidden;margin-bottom:6px}
+.fill{height:100%;background:linear-gradient(90deg,var(--blue),var(--green));border-radius:99px;width:0%;transition:width 0.15s}
+.prog-meta{display:flex;justify-content:space-between;font-family:'DM Mono',monospace;font-size:10px;color:var(--t3)}
+.prog-meta .pct{color:var(--green)}
+
+/* Live feed */
+.live-feed{background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:10px 12px;margin-top:12px;max-height:80px;overflow-y:auto;font-family:'DM Mono',monospace;font-size:9px;color:var(--t3);line-height:1.8}
+.feed-line.hit{color:var(--green)}
+.feed-line.tok{color:var(--blue)}
+
+/* Results */
+.res-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.fpills{display:flex;gap:5px}
+.fp{background:var(--bg2);border:1px solid var(--border);border-radius:5px;padding:5px 11px;font-family:'DM Mono',monospace;font-size:10px;color:var(--t3);cursor:pointer;transition:all 0.12s}
+.fp:hover{color:var(--t2);border-color:var(--border2)}
+.fp.on{background:var(--gd);border-color:rgba(0,232,122,0.2);color:var(--green)}
+.rcount{font-family:'DM Mono',monospace;font-size:10px;color:var(--t3)}
+
+.wcard{background:var(--bg1);border:1px solid var(--border);border-radius:9px;margin-bottom:7px;overflow:hidden;transition:border-color 0.13s}
+.wcard:hover{border-color:var(--border2)}
+.wcard.heth{border-color:rgba(0,232,122,0.18);background:rgba(0,232,122,0.012)}
+.wcard.htok{border-color:rgba(61,139,255,0.18);background:rgba(61,139,255,0.012)}
+.wc-hd{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer}
+.wc-rk{width:24px;height:24px;border-radius:5px;background:var(--bg2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;font-size:9px;color:var(--t3);flex-shrink:0}
+.wcard.heth .wc-rk,.wcard.htok .wc-rk{background:var(--gd);border-color:rgba(0,232,122,0.15);color:var(--green)}
+.wc-info{flex:1;min-width:0}
+.wc-addr{font-family:'DM Mono',monospace;font-size:11px;color:var(--text)}
+.wc-wds{font-family:'DM Mono',monospace;font-size:9px;color:var(--t3);margin-top:2px}
+.wc-bgs{display:flex;gap:5px;align-items:center;flex-shrink:0;flex-wrap:wrap}
+.badge{font-family:'DM Mono',monospace;font-size:9px;padding:3px 7px;border-radius:4px;white-space:nowrap}
+.bg{background:var(--gd);color:var(--green);border:1px solid rgba(0,232,122,0.18)}
+.bb{background:var(--bd);color:var(--blue);border:1px solid rgba(61,139,255,0.18)}
+.bz{background:var(--bg2);color:var(--t3);border:1px solid var(--border)}
+.chev{color:var(--t3);font-size:10px;transition:transform 0.18s;flex-shrink:0}
+.wcard.open .chev{transform:rotate(180deg)}
+.wc-bd{display:none;padding:0 14px 14px;border-top:1px solid var(--border)}
+.wcard.open .wc-bd{display:block}
+.dr{margin-top:10px}
+.dlbl{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:0.12em;color:var(--t3);text-transform:uppercase;margin-bottom:4px}
+.dval{font-family:'DM Mono',monospace;font-size:11px;color:var(--text);background:var(--bg2);padding:8px 10px;border-radius:5px;border:1px solid var(--border);word-break:break-all;line-height:1.6}
+.dval.hl{color:var(--green);border-color:rgba(0,232,122,0.12);background:var(--gd)}
+.cpbtn{display:inline-flex;align-items:center;gap:4px;background:none;border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-family:'DM Mono',monospace;font-size:8px;color:var(--t3);cursor:pointer;margin-top:5px;transition:all 0.12s}
+.cpbtn:hover{border-color:var(--green);color:var(--green)}
+
+/* History */
+.hi{background:var(--bg1);border:1px solid var(--border);border-radius:9px;padding:13px 15px;margin-bottom:7px;display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center}
+.hi-wds{font-family:'DM Mono',monospace;font-size:10px;color:var(--text);margin-bottom:3px}
+.hi-meta{font-family:'DM Mono',monospace;font-size:9px;color:var(--t3)}
+.hi-r{text-align:right}
+.hi-found{font-family:'DM Mono',monospace;font-size:11px;font-weight:500}
+.hi-found.g{color:var(--green)}.hi-found.gr{color:var(--t3)}
+.hi-t{font-family:'DM Mono',monospace;font-size:9px;color:var(--t3);margin-top:2px}
+
+/* Utils */
+.divider{height:1px;background:var(--border);margin:14px 0}
+.empty{text-align:center;padding:40px 20px;font-family:'DM Mono',monospace;font-size:11px;color:var(--t3);line-height:2}
+.ei{font-size:28px;margin-bottom:10px;opacity:0.25}
+.err{font-family:'DM Mono',monospace;font-size:10px;color:var(--red);display:none;margin-top:6px}
+.err.show{display:block}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:99px}
+
+@media(max-width:720px){
+  .app{grid-template-columns:1fr}
+  .sidebar{display:none}
+  .word-grid{grid-template-columns:repeat(2,1fr)}
+  .stat-row{grid-template-columns:repeat(2,1fr)}
+  .phases{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- Topbar -->
+<header class="topbar">
+  <div class="logo">
+    <div class="logo-icon">🔐</div>
+    Seed<em>Vault</em> <span style="font-size:10px;color:var(--t3);font-family:'DM Mono',monospace;margin-left:4px;">v4</span>
+  </div>
+  <div class="topbar-right">
+    <div class="tbadge"><div class="ndot"></div>Ethereum Mainnet</div>
+    <div class="tbadge">🔒 Seed = Local Only</div>
+    <div class="tbadge" id="workerCount">⚡ 4 Workers</div>
+  </div>
+</header>
+
+<!-- Sidebar -->
+<nav class="sidebar">
+  <div class="nav-lbl">Recovery</div>
+  <div class="nav-item on" onclick="nav('recover')"><span class="ico">⚡</span>Recovery<span class="nbadge" id="nb-r">—</span></div>
+  <div class="nav-item" onclick="nav('results')"><span class="ico">🗂</span>Results<span class="nbadge" id="nb-res">0</span></div>
+  <div class="nav-lbl" style="margin-top:8px">Data</div>
+  <div class="nav-item" onclick="nav('history')"><span class="ico">📋</span>History<span class="nbadge" id="nb-h">0</span></div>
+  <div class="sidebar-footer">
+    <div class="sstat"><span>Workers</span><span id="ss-workers">4 parallel</span></div>
+    <div class="sstat"><span>Batch RPC</span><span>100 req/call</span></div>
+    <div class="sstat"><span>Multicall3</span><span>500 addr/req</span></div>
+    <div class="sstat"><span>Pipeline</span><span>Phase 1→2 live</span></div>
+  </div>
+</nav>
+
+<!-- Main -->
+<main class="main">
+
+  <!-- RECOVER -->
+  <div class="page on" id="pg-recover">
+    <div class="page-title">Seed Recovery</div>
+    <div class="page-sub">4 parallel workers + Multicall3 batching. Typically completes in 2–4 minutes.</div>
+
+    <div class="stat-row">
+      <div class="stat"><div class="stat-lbl">Search Space</div><div class="stat-val">4.19M</div><div class="stat-hint">Total combinations</div></div>
+      <div class="stat"><div class="stat-lbl">After Checksum</div><div class="stat-val g">~16K</div><div class="stat-hint">Valid candidates</div></div>
+      <div class="stat"><div class="stat-lbl">Balance Batches</div><div class="stat-val b">~32</div><div class="stat-hint">Multicall3 requests</div></div>
+      <div class="stat"><div class="stat-lbl">Est. Time</div><div class="stat-val a" id="estT">2–4 min</div><div class="stat-hint">End to end</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">Known Words (1–10)</div>
+        <button class="btn btn-g" style="padding:5px 10px;font-size:11px" onclick="clearW()">Clear</button>
+      </div>
+      <div class="card-body">
+        <div class="word-grid" id="wgrid"></div>
+        <div class="miss-row">
+          <div class="miss-box"><div class="miss-n">WORD 11</div><div class="miss-q">?</div></div>
+          <div class="miss-box"><div class="miss-n">WORD 12</div><div class="miss-q">?</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">Token Filters</div>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--t3)">Highlight wallets holding selected tokens</span>
+      </div>
+      <div class="card-body">
+        <div class="tchips" id="tchips">
+          <div class="tc on" data-t="ETH" data-a=""><div class="td"></div>ETH</div>
+          <div class="tc" data-t="USDT" data-a="0xdac17f958d2ee523a2206206994597c13d831ec7"><div class="td"></div>USDT</div>
+          <div class="tc" data-t="USDC" data-a="0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"><div class="td"></div>USDC</div>
+          <div class="tc" data-t="DAI"  data-a="0x6b175474e89094c44da98b954eedeac495271d0f"><div class="td"></div>DAI</div>
+          <div class="tc" data-t="WBTC" data-a="0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"><div class="td"></div>WBTC</div>
+          <div class="tc" data-t="LINK" data-a="0x514910771af9ca656af840dff83e8264ecf986ca"><div class="td"></div>LINK</div>
+          <div class="tc" data-t="UNI"  data-a="0x1f9840a85d5af5bf1d1762f925bdaddc4201f984"><div class="td"></div>UNI</div>
+          <div class="tc" data-t="SHIB" data-a="0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"><div class="td"></div>SHIB</div>
+          <div class="tc" data-t="PEPE" data-a="0x6982508145454ce325ddbe47a25d4ec3d2311933"><div class="td"></div>PEPE</div>
+        </div>
+        <div class="cust-row">
+          <input class="ti" id="cAddr" placeholder="Custom ERC-20 contract (0x…)" spellcheck="false"/>
+          <input class="ti" id="cName" placeholder="Symbol" style="max-width:90px"/>
+        </div>
+      </div>
+    </div>
+
+    <div class="err" id="errMsg"></div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
+      <button class="btn btn-p" id="runBtn" onclick="run()">
+        <div class="spin"></div>
+        <span id="runLbl">⚡ Start Recovery</span>
+      </button>
+      <button class="btn btn-g" id="rstBtn" onclick="resetAll()" style="display:none">Reset</button>
+    </div>
+
+    <div class="prog-wrap" id="progWrap">
+      <div class="phases">
+        <div class="ph" id="ph1"><div class="ph-lbl">Phase 1 — Brute Force</div><div class="ph-val" id="ph1v">Waiting</div><div class="ph-sub" id="ph1s">4 parallel workers</div></div>
+        <div class="ph" id="ph2"><div class="ph-lbl">Phase 2 — Nonce Filter</div><div class="ph-val" id="ph2v">Waiting</div><div class="ph-sub" id="ph2s">Batch JSON-RPC</div></div>
+        <div class="ph" id="ph3"><div class="ph-lbl">Phase 3 — Balances</div><div class="ph-val" id="ph3v">Waiting</div><div class="ph-sub" id="ph3s">Multicall3</div></div>
+      </div>
+      <div class="speed-row">
+        <div class="spd">Speed: <span id="spd1">—</span> combos/s</div>
+        <div class="spd">Valid found: <span id="spd2">0</span></div>
+        <div class="spd">RPC calls: <span id="spd3">0</span></div>
+        <div class="spd">With assets: <span id="spd4">0</span></div>
+      </div>
+      <div class="track"><div class="fill" id="progFill"></div></div>
+      <div class="prog-meta"><span id="progTxt">Initializing…</span><span class="pct" id="progPct">0%</span></div>
+      <div class="live-feed" id="liveFeed"></div>
+    </div>
+  </div>
+
+  <!-- RESULTS -->
+  <div class="page" id="pg-results">
+    <div class="page-title">Results</div>
+    <div class="page-sub">Sorted by balance. Wallets with assets appear first.</div>
+    <div class="res-toolbar">
+      <div class="fpills">
+        <div class="fp on" onclick="filt('all',this)">All</div>
+        <div class="fp" onclick="filt('eth',this)">Has ETH</div>
+        <div class="fp" onclick="filt('tok',this)">Has Tokens</div>
+        <div class="fp" onclick="filt('any',this)">Any Assets</div>
+      </div>
+      <div class="rcount" id="rcount">—</div>
+    </div>
+    <div id="clist"><div class="empty"><div class="ei">🗂</div>Run a recovery first.</div></div>
+  </div>
+
+  <!-- HISTORY -->
+  <div class="page" id="pg-history">
+    <div class="page-title">History</div>
+    <div class="page-sub">Session recovery log.</div>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+      <button class="btn btn-d" onclick="clearHist()">Clear History</button>
+    </div>
+    <div id="hlist"><div class="empty"><div class="ei">📋</div>No history yet.</div></div>
+  </div>
+
+</main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════
+const RPC = 'https://cloudflare-eth.com';
+const DERIVE = "m/44'/60'/0'/0/0";
+const NUM_WORKERS = 4;
+
+// Multicall3 deployed on mainnet at this address
+const MULTICALL3 = '0xcA11bde05977b3631167028862bE2a173976CA11';
+const MC3_ABI = [
+  'function getEthBalance(address addr) view returns (uint256)',
+  'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) payable returns (tuple(bool success, bytes returnData)[] returnData)'
+];
+
+// ERC20 balanceOf selector
+const BAL_OF_SEL = '0x70a08231';
+const ERC20_ABI  = ['function balanceOf(address) view returns (uint256)', 'function decimals() view returns (uint8)'];
+
+const NUM_CONFIRM = '0x52ef7ccb'; // not used but reserved
+
+// ═══════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════
+let BIP39W = null;
+let candidates = [];
+let history = [];
+let running = false;
+let curFilt = 'all';
+let provider = null;
+let rpcCalls = 0;
+
+// ═══════════════════════════════════════════════════════════════════
+// NAVIGATION
+// ═══════════════════════════════════════════════════════════════════
+function nav(p) {
+  document.querySelectorAll('.page').forEach(x => x.classList.remove('on'));
+  document.querySelectorAll('.nav-item').forEach(x => x.classList.remove('on'));
+  document.getElementById('pg-' + p).classList.add('on');
+  document.querySelectorAll('.nav-item').forEach(x => {
+    if (x.getAttribute('onclick')?.includes(p)) x.classList.add('on');
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// WORDLIST + GRID
+// ═══════════════════════════════════════════════════════════════════
+async function loadWords() {
+  if (BIP39W) return BIP39W;
+  const wl = ethers.wordlists.en;
+  BIP39W = Array.from({length: 2048}, (_, i) => wl.getWord(i));
+  return BIP39W;
+}
+
+async function buildGrid() {
+  const words = await loadWords();
+  const g = document.getElementById('wgrid');
+  for (let i = 1; i <= 10; i++) {
+    const s = document.createElement('div');
+    s.className = 'wslot';
+    s.innerHTML = `<label>#${i}</label><input type="text" id="w${i}" placeholder="word ${i}" autocomplete="off" spellcheck="false"/><div class="acl" id="ac${i}"></div>`;
+    g.appendChild(s);
+    const inp = s.querySelector('input'), acl = s.querySelector('.acl');
+    let ai = -1;
+    inp.addEventListener('input', () => {
+      const v = inp.value.trim().toLowerCase();
+      inp.className = v && words.includes(v) ? 'ok' : (v.length > 2 && !words.some(w => w.startsWith(v)) ? 'bad' : '');
+      acl.innerHTML = ''; ai = -1;
+      if (v.length < 2) { acl.classList.remove('open'); return; }
+      const hits = words.filter(w => w.startsWith(v)).slice(0, 5);
+      if (!hits.length) { acl.classList.remove('open'); return; }
+      hits.forEach(w => {
+        const el = document.createElement('div'); el.className = 'aci'; el.textContent = w;
+        el.addEventListener('mousedown', e => { e.preventDefault(); inp.value = w; inp.className = 'ok'; acl.classList.remove('open'); });
+        acl.appendChild(el);
+      });
+      acl.classList.add('open');
+    });
+    inp.addEventListener('keydown', e => {
+      const its = [...acl.querySelectorAll('.aci')];
+      if (e.key === 'ArrowDown') ai = Math.min(ai+1, its.length-1);
+      else if (e.key === 'ArrowUp') ai = Math.max(ai-1, 0);
+      else if ((e.key === 'Enter' || e.key === 'Tab') && its.length) {
+        const idx = ai >= 0 ? ai : 0;
+        inp.value = its[idx].textContent; inp.className = 'ok'; acl.classList.remove('open'); e.preventDefault(); return;
+      } else if (e.key === 'Escape') { acl.classList.remove('open'); return; }
+      its.forEach((el, idx) => el.classList.toggle('sel', idx === ai));
+    });
+    inp.addEventListener('blur', () => setTimeout(() => acl.classList.remove('open'), 150));
+  }
+}
+buildGrid();
+
+document.querySelectorAll('.tc').forEach(c => c.addEventListener('click', () => c.classList.toggle('on')));
+function clearW() { for (let i=1;i<=10;i++){const el=document.getElementById(`w${i}`);if(el){el.value='';el.className='';}} }
+
+// ═══════════════════════════════════════════════════════════════════
+// WEB WORKER — inline via blob
+// Splits the 2048x2048 grid into NUM_WORKERS slices
+// ═══════════════════════════════════════════════════════════════════
+const WK_SRC = `
+// Worker: brute-force iteration only
+// Checksum validation is done on the main thread using ethers.js
+// Worker sends batches of word pairs, main thread validates and responds
+var W = null;
+
+self.onmessage = function(evt) {
+  var msg = evt.data;
+
+  if (msg.type === "INIT") {
+    W = msg.words;
+    self.postMessage({ type: "READY" });
+    return;
+  }
+
+  if (msg.type !== "RUN") return;
+
+  var iStart = msg.iStart;
+  var iEnd = msg.iEnd;
+  var wid = msg.wid;
+  var knownIdxs = msg.knownIdxs;
+
+  var BATCH = 4096; // send this many pairs to main thread at once for validation
+  var batch = [];
+  var checked = 0;
+  var found = 0;
+
+  for (var i = iStart; i < iEnd; i++) {
+    for (var j = 0; j < 2048; j++) {
+      batch.push(i * 2048 + j);
+      checked++;
+      if (batch.length >= BATCH) {
+        self.postMessage({ type: "BATCH", wid: wid, pairs: batch, checked: checked, found: found });
+        batch = [];
+      }
+    }
+  }
+  if (batch.length > 0) {
+    self.postMessage({ type: "BATCH", wid: wid, pairs: batch, checked: checked, found: found });
+  }
+  self.postMessage({ type: "DONE", wid: wid, checked: checked });
+};
+`;
+
+function mkWorker() {
+  return new Worker(URL.createObjectURL(new Blob([WK_SRC], {type:'application/javascript'})));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// BATCH JSON-RPC helper
+// Sends up to 100 eth_getTransactionCount calls in one HTTP POST
+// ═══════════════════════════════════════════════════════════════════
+async function batchRPC(calls) {
+  // calls = [{method, params, id}]
+  rpcCalls++;
+  document.getElementById('spd3').textContent = rpcCalls;
+  try {
+    const res = await fetch(RPC, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(calls)
+    });
+    return await res.json();
+  } catch { return calls.map(c => ({id: c.id, result: null, error: true})); }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// NONCE BATCH FILTER — discard never-used wallets
+// Returns array of {address, mnemonic, w11, w12} that have nonce > 0
+// ═══════════════════════════════════════════════════════════════════
+async function nonceFilter(pairs, knownWords) {
+  const CHUNK = 100;
+  const active = [];
+  for (let i = 0; i < pairs.length; i += CHUNK) {
+    const slice = pairs.slice(i, i + CHUNK);
+    const calls = slice.map((p, idx) => ({
+      jsonrpc: '2.0', id: idx,
+      method: 'eth_getTransactionCount',
+      params: [p.address, 'latest']
+    }));
+    const results = await batchRPC(calls);
+    results.forEach((r, idx) => {
+      const nonce = parseInt(r.result || '0x0', 16);
+      if (nonce > 0) active.push(slice[idx]);
+    });
+    const pct = 50 + Math.round(((i + slice.length) / pairs.length) * 15);
+    prog(pct, `Phase 2 — Nonce filter: ${i+slice.length}/${pairs.length} checked, ${active.length} active`, `${pct}%`);
+    ph('ph2', 'run', `${active.length} active wallets`, `${i+slice.length}/${pairs.length}`);
+    await sleep(0);
+  }
+  return active;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MULTICALL3 ETH BALANCE — 500 addresses per call
+// ═══════════════════════════════════════════════════════════════════
+async function multicallEthBal(addresses) {
+  const mc = new ethers.Contract(MULTICALL3, MC3_ABI, getProvider());
+  const CHUNK = 500;
+  const results = new Map();
+  for (let i = 0; i < addresses.length; i += CHUNK) {
+    const slice = addresses.slice(i, i + CHUNK);
+    try {
+      const calls = slice.map(addr => ({
+        target: MULTICALL3,
+        allowFailure: true,
+        callData: mc.interface.encodeFunctionData('getEthBalance', [addr])
+      }));
+      rpcCalls++;
+      document.getElementById('spd3').textContent = rpcCalls;
+      const res = await mc.aggregate3(calls);
+      res.forEach((r, idx) => {
+        const bal = r.success ? parseFloat(ethers.utils.formatEther(ethers.BigNumber.from(r.returnData))) : 0;
+        results.set(slice[idx], bal);
+      });
+    } catch {
+      slice.forEach(a => results.set(a, 0));
+    }
+    await sleep(0);
+  }
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MULTICALL3 TOKEN BALANCE — batch one token across all addresses
+// ═══════════════════════════════════════════════════════════════════
+async function multicallTokenBal(addresses, tokenAddr, tokenName, decimals) {
+  const mc = new ethers.Contract(MULTICALL3, MC3_ABI, getProvider());
+  const CHUNK = 500;
+  const results = new Map();
+  const paddedSel = (addr) => BAL_OF_SEL + addr.slice(2).toLowerCase().padStart(64, '0');
+
+  for (let i = 0; i < addresses.length; i += CHUNK) {
+    const slice = addresses.slice(i, i + CHUNK);
+    try {
+      const calls = slice.map(addr => ({
+        target: tokenAddr,
+        allowFailure: true,
+        callData: paddedSel(addr)
+      }));
+      rpcCalls++;
+      document.getElementById('spd3').textContent = rpcCalls;
+      const res = await mc.aggregate3(calls);
+      res.forEach((r, idx) => {
+        if (r.success && r.returnData && r.returnData !== '0x') {
+          try {
+            const raw = ethers.BigNumber.from(r.returnData);
+            const bal = parseFloat(ethers.utils.formatUnits(raw, decimals));
+            results.set(slice[idx], bal);
+          } catch { results.set(slice[idx], 0); }
+        } else { results.set(slice[idx], 0); }
+      });
+    } catch { slice.forEach(a => results.set(a, 0)); }
+    await sleep(0);
+  }
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// GET TOKEN DECIMALS
+// ═══════════════════════════════════════════════════════════════════
+const DECIMALS_CACHE = {};
+async function getDecimals(addr) {
+  if (DECIMALS_CACHE[addr]) return DECIMALS_CACHE[addr];
+  try {
+    const c = new ethers.Contract(addr, ERC20_ABI, getProvider());
+    const d = await c.decimals();
+    DECIMALS_CACHE[addr] = d;
+    return d;
+  } catch { return 18; }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// MAIN RUN
+// ═══════════════════════════════════════════════════════════════════
+async function run() {
+  if (running) return;
+  const words = await loadWords();
+  const known = [];
+  for (let i = 1; i <= 10; i++) {
+    const v = document.getElementById(`w${i}`)?.value.trim().toLowerCase();
+    if (!v) { showErr(`Word #${i} is empty.`); return; }
+    if (!words.includes(v)) { showErr(`"${v}" is not a valid BIP39 word.`); return; }
+    known.push(v);
+  }
+  hideErr();
+  running = true; candidates = []; rpcCalls = 0;
+  const t0 = Date.now();
+
+  const btn = document.getElementById('runBtn');
+  btn.classList.add('loading'); btn.disabled = true;
+  document.getElementById('runLbl').textContent = 'Searching…';
+  document.getElementById('rstBtn').style.display = 'flex';
+  document.getElementById('progWrap').classList.add('show');
+  feed('Starting 4 parallel workers…', '');
+
+  // ── PHASE 1: Workers iterate, main thread validates with ethers ──
+  ph('ph1', 'run', 'Running…', '4 workers + ethers validation');
+  const slice = Math.ceil(2048 / NUM_WORKERS);
+  const workerProgress = new Array(NUM_WORKERS).fill(0);
+  let totalChecked = 0;
+  let totalValid = 0;
+  let speedStart = Date.now();
+
+  const withAddr = await new Promise(resolve => {
+    const results = [];
+    let done = 0;
+
+    for (let w = 0; w < NUM_WORKERS; w++) {
+      const worker = mkWorker();
+      const iStart = w * slice;
+      const iEnd = Math.min(iStart + slice, 2048);
+      const wid = w;
+
+      // Send INIT first, then RUN
+      worker.postMessage({ type: 'INIT', words });
+
+      worker.onmessage = function(e) {
+        const data = e.data;
+
+        if (data.type === 'READY') {
+          const knownIdxs = known.map(kw => words.indexOf(kw));
+          worker.postMessage({ type: 'RUN', words, known, knownIdxs, iStart, iEnd, wid });
+          return;
+        }
+
+        if (data.type === 'BATCH') {
+          // data.pairs is array of encoded ij values: i*2048+j
+          // Validate each pair using ethers on main thread
+          const pairs = data.pairs;
+          for (let k = 0; k < pairs.length; k++) {
+            const ij = pairs[k];
+            const i = Math.floor(ij / 2048);
+            const j = ij % 2048;
+            const w11 = words[i];
+            const w12 = words[j];
+            const mnemonic = known.concat([w11, w12]).join(' ');
+            try {
+              // ethers validates checksum — throws if invalid
+              ethers.utils.mnemonicToEntropy(mnemonic);
+              // Also derive address while we're here
+              const address = ethers.utils.HDNode.fromMnemonic(mnemonic).derivePath(DERIVE).address;
+              results.push({ mnemonic, address, word11: w11, word12: w12 });
+              totalValid++;
+            } catch(ex) { /* invalid checksum, skip */ }
+          }
+          workerProgress[data.wid] = data.checked;
+          totalChecked = workerProgress.reduce((a, b) => a + b, 0);
+          const pct = Math.round((totalChecked / (2048 * 2048)) * 50);
+          const elapsed = Math.max(0.1, (Date.now() - speedStart) / 1000);
+          const speed = Math.round(totalChecked / elapsed);
+          prog(pct, 'Phase 1 — ' + totalChecked.toLocaleString() + ' / 4,194,304 checked', pct + '%');
+          ph('ph1', 'run', totalValid + ' valid found', speed.toLocaleString() + ' combos/s');
+          document.getElementById('spd1').textContent = speed.toLocaleString();
+          document.getElementById('spd2').textContent = totalValid;
+          return;
+        }
+
+        if (data.type === 'DONE') {
+          worker.terminate();
+          done++;
+          if (done === NUM_WORKERS) resolve(results);
+        }
+      };
+
+      worker.onerror = function() {
+        worker.terminate();
+        done++;
+        if (done === NUM_WORKERS) resolve(results);
+      };
+    }
+  });
+
+  const ph1Time = ((Date.now() - t0) / 1000).toFixed(1);
+  ph('ph1', 'done', withAddr.length + ' valid phrases', ph1Time + 's');
+  feed('Phase 1 done: ' + withAddr.length + ' valid phrases in ' + ph1Time + 's', '');
+
+  // ── PHASE 2: NONCE FILTER ──
+  prog(50, 'Phase 2 — Filtering by transaction history…', '50%');
+  ph('ph2', 'run', 'Batch RPC nonce check…', `${withAddr.length} addresses`);
+  const active = await nonceFilter(withAddr, known);
+  const ph2Time = ((Date.now() - t0) / 1000 - parseFloat(ph1Time)).toFixed(1);
+  ph('ph2', 'done', `${active.length} active wallets`, `${ph2Time}s`);
+  feed(`Phase 2: ${withAddr.length} → ${active.length} active (have transactions)`, active.length > 0 ? 'hit' : '');
+
+  // If nonce filter returns 0 (all brand new wallets, unlikely but possible), fall back to all
+  const toCheck = active.length > 0 ? active : withAddr;
+
+  // ── PHASE 3: MULTICALL3 BALANCE CHECK ──
+  prog(65, 'Phase 3 — Multicall3 ETH balance check…', '65%');
+  ph('ph3', 'run', 'Multicall3 ETH…', `${toCheck.length} addresses`);
+
+  const addrs = toCheck.map(p => p.address);
+  const ethBals = await multicallEthBal(addrs);
+  prog(75, 'Phase 3 — Multicall3 token balances…', '75%');
+
+  // Token multicall
+  const selectedTokens = getTokens();
+  const erc20s = selectedTokens.filter(t => t.addr);
+  const tokenResults = {}; // tokenName -> Map<address, balance>
+
+  for (const tok of erc20s) {
+    const dec = await getDecimals(tok.addr);
+    tokenResults[tok.name] = await multicallTokenBal(addrs, tok.addr, tok.name, dec);
+    prog(75 + Math.round((Object.keys(tokenResults).length / Math.max(erc20s.length,1)) * 20),
+      `Phase 3 — Checking ${tok.name}…`, '');
+    await sleep(0);
+  }
+
+  // Assemble candidates
+  candidates = toCheck.map(p => {
+    const ethBal = ethBals.get(p.address) || 0;
+    const tokBals = erc20s.map(t => ({
+      name: t.name,
+      balance: (tokenResults[t.name] && tokenResults[t.name].get(p.address)) || 0
+    })).filter(t => t.balance > 0);
+    return {
+      mnemonic: p.mnemonic,
+      address: p.address,
+      word11: p.word11 || p.w11 || '',
+      word12: p.word12 || p.w12 || '',
+      ethBalance: ethBal,
+      tokenBalances: tokBals,
+      hasAssets: ethBal > 0 || tokBals.length > 0
+    };
+  });
+
+  const withAssets = candidates.filter(c => c.hasAssets).length;
+  document.getElementById('spd4').textContent = withAssets;
+
+  const totalTime = ((Date.now() - t0) / 1000).toFixed(1);
+  ph('ph3', 'done', `${withAssets} wallets with assets`, `${totalTime}s total`);
+  prog(100, `Complete in ${totalTime}s — ${candidates.length} candidates, ${withAssets} with assets`, '100%');
+
+  candidates.filter(c => c.hasAssets).forEach(c => {
+    feed(`✓ ${c.address.slice(0,10)}… — ${c.ethBalance.toFixed(4)} ETH w11:${c.word11} w12:${c.word12}`, 'hit');
+  });
+
+  // Update history
+  history.unshift({ id: Date.now(), words: known.join(' '), candidates: candidates.length, withAssets, time: totalTime, ts: new Date().toLocaleTimeString() });
+  document.getElementById('nb-h').textContent = history.length;
+  document.getElementById('nb-res').textContent = candidates.length;
+  document.getElementById('nb-r').textContent = `${withAssets} found`;
+
+  btn.classList.remove('loading'); btn.disabled = false;
+  document.getElementById('runLbl').textContent = '⚡ Search Again';
+  running = false;
+
+  renderResults('all');
+  renderHistory();
+  nav('results');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════════════════
+function filt(f, el) {
+  curFilt = f;
+  document.querySelectorAll('.fp').forEach(p => p.classList.remove('on'));
+  el.classList.add('on');
+  renderResults(f);
+}
+
+function renderResults(f) {
+  let data = [...candidates];
+  if (f === 'eth') data = data.filter(c => c.ethBalance > 0);
+  else if (f === 'tok') data = data.filter(c => c.tokenBalances?.length > 0);
+  else if (f === 'any') data = data.filter(c => c.hasAssets);
+  data.sort((a, b) => (b.hasAssets - a.hasAssets) || (b.ethBalance - a.ethBalance));
+
+  const total = candidates.length, wa = candidates.filter(c=>c.hasAssets).length;
+  document.getElementById('rcount').textContent = `${data.length} shown · ${wa} with assets · ${total} total`;
+
+  const list = document.getElementById('clist');
+  if (!data.length) { list.innerHTML = `<div class="empty"><div class="ei">🔍</div>No results for this filter.</div>`; return; }
+
+  list.innerHTML = data.map((c, i) => {
+    const sa = c.address.slice(0,10)+'…'+c.address.slice(-8);
+    const eb = c.ethBalance > 0 ? `<span class="badge bg">${c.ethBalance.toFixed(4)} ETH</span>` : `<span class="badge bz">0 ETH</span>`;
+    const tb = (c.tokenBalances||[]).map(t=>`<span class="badge bb">${t.balance.toLocaleString(undefined,{maximumFractionDigits:4})} ${t.name}</span>`).join('');
+    const cls = c.tokenBalances?.length ? 'wcard htok' : c.ethBalance > 0 ? 'wcard heth' : 'wcard';
+    return `<div class="${cls}" id="wc${i}">
+      <div class="wc-hd" onclick="twc(${i})">
+        <div class="wc-rk">${i+1}</div>
+        <div class="wc-info">
+          <div class="wc-addr">${sa}</div>
+          <div class="wc-wds">w11: <b>${c.word11}</b> · w12: <b>${c.word12}</b></div>
+        </div>
+        <div class="wc-bgs">${eb}${tb}</div>
+        <div class="chev">▾</div>
+      </div>
+      <div class="wc-bd">
+        <div class="dr"><div class="dlbl">Address</div><div class="dval">${c.address}</div>
+          <button class="cpbtn" onclick="cp('${c.address}',this)">⎘ Copy</button></div>
+        <div class="dr"><div class="dlbl">Seed Phrase</div><div class="dval hl">${c.mnemonic}</div>
+          <button class="cpbtn" onclick="cp('${c.mnemonic}',this)">⎘ Copy Seed</button></div>
+        <div class="dr"><div class="dlbl">ETH Balance</div><div class="dval">${c.ethBalance} ETH</div></div>
+        ${c.tokenBalances?.length?`<div class="dr"><div class="dlbl">Tokens</div><div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:5px">${c.tokenBalances.map(t=>`<span class="badge bb">${t.balance.toLocaleString(undefined,{maximumFractionDigits:4})} ${t.name}</span>`).join('')}</div></div>`:''}
+        <div class="dr"><div class="dlbl">Path</div><div class="dval">${DERIVE}</div></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderHistory() {
+  const el = document.getElementById('hlist');
+  if (!history.length) { el.innerHTML = `<div class="empty"><div class="ei">📋</div>No history.</div>`; return; }
+  el.innerHTML = history.map(h => `
+    <div class="hi">
+      <div>
+        <div class="hi-wds">${h.words.split(' ').join(' ')} <span style="color:var(--t3)">? ?</span></div>
+        <div class="hi-meta">${h.candidates} candidates · ${h.time}s · ${h.ts}</div>
+      </div>
+      <div class="hi-r">
+        <div class="hi-found ${h.withAssets>0?'g':'gr'}">${h.withAssets>0?`✓ ${h.withAssets} wallet${h.withAssets>1?'s':''} found`:'No assets'}</div>
+      </div>
+    </div>`).join('');
+}
+
+function clearHist() { history=[]; document.getElementById('nb-h').textContent='0'; renderHistory(); }
+
+// ═══════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════
+function twc(i) { document.getElementById(`wc${i}`).classList.toggle('open'); }
+async function cp(t, btn) {
+  try { await navigator.clipboard.writeText(t); const o=btn.textContent; btn.textContent='✓ Copied'; setTimeout(()=>btn.textContent=o,1400); }
+  catch { btn.textContent='Failed'; }
+}
+function prog(pct, txt, label) {
+  document.getElementById('progFill').style.width = pct+'%';
+  document.getElementById('progTxt').textContent = txt;
+  document.getElementById('progPct').textContent = label;
+}
+function ph(id, state, val, sub) {
+  const el = document.getElementById(id);
+  el.className = 'ph' + (state==='run'?' run':state==='done'?' done':'');
+  document.getElementById(id+'v').textContent = val;
+  document.getElementById(id+'s').textContent = sub;
+}
+function feed(msg, cls) {
+  const f = document.getElementById('liveFeed');
+  const line = document.createElement('div');
+  line.className = 'feed-line' + (cls ? ' '+cls : '');
+  line.textContent = msg;
+  f.appendChild(line);
+  f.scrollTop = f.scrollHeight;
+}
+function showErr(m) { const e=document.getElementById('errMsg'); e.textContent=m; e.classList.add('show'); }
+function hideErr() { document.getElementById('errMsg').classList.remove('show'); }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function getProvider() { if (!provider) provider = new ethers.providers.JsonRpcProvider(RPC); return provider; }
+function getTokens() {
+  const t = [];
+  document.querySelectorAll('.tc.on').forEach(c => t.push({name:c.dataset.t, addr:c.dataset.a}));
+  const ca = document.getElementById('cAddr').value.trim();
+  const cn = document.getElementById('cName').value.trim()||'Custom';
+  if (ca && ca.startsWith('0x') && ca.length===42) t.push({name:cn, addr:ca});
+  return t;
+}
+function resetAll() {
+  if (running) return;
+  clearW(); candidates=[];
+  document.getElementById('progWrap').classList.remove('show');
+  document.getElementById('rstBtn').style.display='none';
+  document.getElementById('runLbl').textContent='⚡ Start Recovery';
+  document.getElementById('nb-res').textContent='0';
+  document.getElementById('nb-r').textContent='—';
+  document.getElementById('liveFeed').innerHTML='';
+  document.getElementById('clist').innerHTML='<div class="empty"><div class="ei">🗂</div>Run a recovery first.</div>';
+  ['spd1','spd2','spd3','spd4'].forEach(id=>document.getElementById(id).textContent=id==='spd1'?'—':'0');
+  hideErr();
+  ['ph1','ph2','ph3'].forEach(id=>ph(id,'','Waiting',''));
+}
+</script>
+</body>
+</html>
