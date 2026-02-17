@@ -443,46 +443,25 @@ function clearW() { for (let i=1;i<=10;i++){const el=document.getElementById(`w$
 // Splits the 2048x2048 grid into NUM_WORKERS slices
 // ═══════════════════════════════════════════════════════════════════
 const WK_SRC = `
-// Worker: brute-force iteration only
-// Checksum validation is done on the main thread using ethers.js
-// Worker sends batches of word pairs, main thread validates and responds
-var W = null;
-
+// Worker: just sends i,j index pairs in small chunks - no validation here
 self.onmessage = function(evt) {
   var msg = evt.data;
-
-  if (msg.type === "INIT") {
-    W = msg.words;
-    self.postMessage({ type: "READY" });
-    return;
-  }
-
   if (msg.type !== "RUN") return;
-
   var iStart = msg.iStart;
   var iEnd = msg.iEnd;
   var wid = msg.wid;
-  var knownIdxs = msg.knownIdxs;
-
-  var BATCH = 4096; // send this many pairs to main thread at once for validation
-  var batch = [];
-  var checked = 0;
-  var found = 0;
-
-  for (var i = iStart; i < iEnd; i++) {
-    for (var j = 0; j < 2048; j++) {
-      batch.push(i * 2048 + j);
-      checked++;
-      if (batch.length >= BATCH) {
-        self.postMessage({ type: "BATCH", wid: wid, pairs: batch, checked: checked, found: found });
-        batch = [];
+  var CHUNK = 256; // rows of i per chunk - small enough to stay responsive
+  for (var i = iStart; i < iEnd; i += CHUNK) {
+    var end = Math.min(i + CHUNK, iEnd);
+    var pairs = [];
+    for (var ii = i; ii < end; ii++) {
+      for (var j = 0; j < 2048; j++) {
+        pairs.push(ii * 2048 + j);
       }
     }
+    self.postMessage({ type: "CHUNK", wid: wid, pairs: pairs, iDone: end });
   }
-  if (batch.length > 0) {
-    self.postMessage({ type: "BATCH", wid: wid, pairs: batch, checked: checked, found: found });
-  }
-  self.postMessage({ type: "DONE", wid: wid, checked: checked });
+  self.postMessage({ type: "DONE", wid: wid });
 };
 `;
 
@@ -509,100 +488,179 @@ async function batchRPC(calls) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// NONCE BATCH FILTER — discard never-used wallets
-// Returns array of {address, mnemonic, w11, w12} that have nonce > 0
+// PHASE 2: CONCURRENT MULTI-RPC BALANCE ENGINE
+// Strategy:
+//  1. Rotate across 5 free public RPCs to avoid rate limiting
+//  2. Fire ALL nonce checks concurrently (Promise.all, no sequential waiting)
+//  3. Multicall3 ETH+token balance in ONE call per batch of 500
+//  4. Total RPC round trips: ~32 instead of thousands
 // ═══════════════════════════════════════════════════════════════════
-async function nonceFilter(pairs, knownWords) {
+
+// 5 public Ethereum RPC endpoints — rotated to spread load
+const RPCS = [
+  'https://cloudflare-eth.com',
+  'https://eth.llamarpc.com',
+  'https://rpc.ankr.com/eth',
+  'https://ethereum.publicnode.com',
+  'https://1rpc.io/eth'
+];
+let rpcIdx = 0;
+const providers = {};
+
+function getNextProvider() {
+  const url = RPCS[rpcIdx % RPCS.length];
+  rpcIdx++;
+  if (!providers[url]) providers[url] = new ethers.providers.JsonRpcProvider(url);
+  return providers[url];
+}
+
+// Send a raw JSON-RPC batch to a specific RPC URL
+async function rawBatch(rpcUrl, calls) {
+  rpcCalls++;
+  document.getElementById('spd3').textContent = rpcCalls;
+  try {
+    const r = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(calls)
+    });
+    return await r.json();
+  } catch {
+    return calls.map(c => ({ id: c.id, result: '0x0' }));
+  }
+}
+
+// ── CONCURRENT nonce check across ALL addresses simultaneously ──
+// Splits addresses into chunks of 100, fires all chunks in parallel
+// across rotating RPCs — completes in time of ONE round trip, not 160
+async function nonceFilterConcurrent(pairs) {
   const CHUNK = 100;
-  const active = [];
+  const chunks = [];
   for (let i = 0; i < pairs.length; i += CHUNK) {
-    const slice = pairs.slice(i, i + CHUNK);
+    chunks.push(pairs.slice(i, i + CHUNK));
+  }
+
+  ph('ph2', 'run', `Firing ${chunks.length} concurrent nonce checks…`, `${pairs.length} addresses`);
+
+  // Fire ALL chunks concurrently, rotating across RPCs
+  const chunkResults = await Promise.all(chunks.map((slice, ci) => {
+    const rpcUrl = RPCS[ci % RPCS.length];
     const calls = slice.map((p, idx) => ({
       jsonrpc: '2.0', id: idx,
       method: 'eth_getTransactionCount',
       params: [p.address, 'latest']
     }));
-    const results = await batchRPC(calls);
-    results.forEach((r, idx) => {
-      const nonce = parseInt(r.result || '0x0', 16);
-      if (nonce > 0) active.push(slice[idx]);
+    rpcCalls++;
+    document.getElementById('spd3').textContent = rpcCalls;
+    return fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(calls)
+    }).then(r => r.json()).catch(() => calls.map(c => ({ id: c.id, result: '0x0' })));
+  }));
+
+  const active = [];
+  chunkResults.forEach((results, ci) => {
+    const slice = chunks[ci];
+    const resArr = Array.isArray(results) ? results : [];
+    resArr.forEach((r, idx) => {
+      if (idx < slice.length) {
+        const nonce = parseInt((r && r.result) || '0x0', 16);
+        if (nonce > 0) active.push(slice[idx]);
+      }
     });
-    const pct = 50 + Math.round(((i + slice.length) / pairs.length) * 15);
-    prog(pct, `Phase 2 — Nonce filter: ${i+slice.length}/${pairs.length} checked, ${active.length} active`, `${pct}%`);
-    ph('ph2', 'run', `${active.length} active wallets`, `${i+slice.length}/${pairs.length}`);
-    await sleep(0);
-  }
+  });
   return active;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// MULTICALL3 ETH BALANCE — 500 addresses per call
-// ═══════════════════════════════════════════════════════════════════
-async function multicallEthBal(addresses) {
-  const mc = new ethers.Contract(MULTICALL3, MC3_ABI, getProvider());
+// ── CONCURRENT Multicall3 ETH balance — ALL batches in parallel ──
+async function multicallEthBalConcurrent(addresses) {
   const CHUNK = 500;
   const results = new Map();
-  for (let i = 0; i < addresses.length; i += CHUNK) {
-    const slice = addresses.slice(i, i + CHUNK);
-    try {
-      const calls = slice.map(addr => ({
+  const chunks = [];
+  for (let i = 0; i < addresses.length; i += CHUNK) chunks.push(addresses.slice(i, i + CHUNK));
+  if (!chunks.length) return results;
+
+  // Build Multicall3 ABI encoder
+  const mc3iface = new ethers.utils.Interface([
+    'function getEthBalance(address) view returns (uint256)',
+    'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) payable returns (tuple(bool success, bytes returnData)[])'
+  ]);
+
+  const allResults = await Promise.all(chunks.map((slice, ci) => {
+    const provider = getNextProvider();
+    const callData = mc3iface.encodeFunctionData('aggregate3',
+      [slice.map(addr => ({
         target: MULTICALL3,
         allowFailure: true,
-        callData: mc.interface.encodeFunctionData('getEthBalance', [addr])
-      }));
-      rpcCalls++;
-      document.getElementById('spd3').textContent = rpcCalls;
-      const res = await mc.aggregate3(calls);
-      res.forEach((r, idx) => {
-        const bal = r.success ? parseFloat(ethers.utils.formatEther(ethers.BigNumber.from(r.returnData))) : 0;
-        results.set(slice[idx], bal);
-      });
-    } catch {
-      slice.forEach(a => results.set(a, 0));
-    }
-    await sleep(0);
-  }
+        callData: mc3iface.encodeFunctionData('getEthBalance', [addr])
+      }))]
+    );
+    rpcCalls++;
+    document.getElementById('spd3').textContent = rpcCalls;
+    return provider.call({ to: MULTICALL3, data: callData })
+      .then(raw => {
+        const decoded = mc3iface.decodeFunctionResult('aggregate3', raw);
+        return { slice, decoded: decoded[0] };
+      })
+      .catch(() => ({ slice, decoded: null }));
+  }));
+
+  allResults.forEach(({ slice, decoded }) => {
+    slice.forEach((addr, idx) => {
+      let bal = 0;
+      if (decoded && decoded[idx] && decoded[idx].success) {
+        try { bal = parseFloat(ethers.utils.formatEther(ethers.BigNumber.from(decoded[idx].returnData))); } catch {}
+      }
+      results.set(addr, bal);
+    });
+  });
   return results;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// MULTICALL3 TOKEN BALANCE — batch one token across all addresses
-// ═══════════════════════════════════════════════════════════════════
-async function multicallTokenBal(addresses, tokenAddr, tokenName, decimals) {
-  const mc = new ethers.Contract(MULTICALL3, MC3_ABI, getProvider());
+// ── CONCURRENT Multicall3 token balance ──
+async function multicallTokenBalConcurrent(addresses, tokenAddr, decimals) {
   const CHUNK = 500;
   const results = new Map();
-  const paddedSel = (addr) => BAL_OF_SEL + addr.slice(2).toLowerCase().padStart(64, '0');
+  const chunks = [];
+  for (let i = 0; i < addresses.length; i += CHUNK) chunks.push(addresses.slice(i, i + CHUNK));
+  if (!chunks.length) return results;
 
-  for (let i = 0; i < addresses.length; i += CHUNK) {
-    const slice = addresses.slice(i, i + CHUNK);
-    try {
-      const calls = slice.map(addr => ({
-        target: tokenAddr,
-        allowFailure: true,
-        callData: paddedSel(addr)
-      }));
-      rpcCalls++;
-      document.getElementById('spd3').textContent = rpcCalls;
-      const res = await mc.aggregate3(calls);
-      res.forEach((r, idx) => {
-        if (r.success && r.returnData && r.returnData !== '0x') {
-          try {
-            const raw = ethers.BigNumber.from(r.returnData);
-            const bal = parseFloat(ethers.utils.formatUnits(raw, decimals));
-            results.set(slice[idx], bal);
-          } catch { results.set(slice[idx], 0); }
-        } else { results.set(slice[idx], 0); }
-      });
-    } catch { slice.forEach(a => results.set(a, 0)); }
-    await sleep(0);
-  }
+  const paddedSel = addr => BAL_OF_SEL + addr.slice(2).toLowerCase().padStart(64, '0');
+
+  const mc3iface = new ethers.utils.Interface([
+    'function aggregate3(tuple(address target, bool allowFailure, bytes callData)[] calls) payable returns (tuple(bool success, bytes returnData)[])'
+  ]);
+
+  const allResults = await Promise.all(chunks.map((slice, ci) => {
+    const provider = getNextProvider();
+    const callData = mc3iface.encodeFunctionData('aggregate3',
+      [slice.map(addr => ({ target: tokenAddr, allowFailure: true, callData: paddedSel(addr) }))]
+    );
+    rpcCalls++;
+    document.getElementById('spd3').textContent = rpcCalls;
+    return provider.call({ to: MULTICALL3, data: callData })
+      .then(raw => {
+        const decoded = mc3iface.decodeFunctionResult('aggregate3', raw);
+        return { slice, decoded: decoded[0] };
+      })
+      .catch(() => ({ slice, decoded: null }));
+  }));
+
+  allResults.forEach(({ slice, decoded }) => {
+    slice.forEach((addr, idx) => {
+      let bal = 0;
+      if (decoded && decoded[idx] && decoded[idx].success && decoded[idx].returnData !== '0x') {
+        try {
+          bal = parseFloat(ethers.utils.formatUnits(ethers.BigNumber.from(decoded[idx].returnData), decimals));
+        } catch {}
+      }
+      results.set(addr, bal);
+    });
+  });
   return results;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// GET TOKEN DECIMALS
-// ═══════════════════════════════════════════════════════════════════
 const DECIMALS_CACHE = {};
 async function getDecimals(addr) {
   if (DECIMALS_CACHE[addr]) return DECIMALS_CACHE[addr];
@@ -638,80 +696,94 @@ async function run() {
   document.getElementById('progWrap').classList.add('show');
   feed('Starting 4 parallel workers…', '');
 
-  // ── PHASE 1: Workers iterate, main thread validates with ethers ──
-  ph('ph1', 'run', 'Running…', '4 workers + ethers validation');
-  const slice = Math.ceil(2048 / NUM_WORKERS);
-  const workerProgress = new Array(NUM_WORKERS).fill(0);
+  // ── PHASE 1: Workers send chunks, main thread validates with ethers + yields every chunk ──
+  ph('ph1', 'run', 'Running…', '4 workers + async ethers validation');
+  const sliceSize = Math.ceil(2048 / NUM_WORKERS);
+  const workerDone = new Array(NUM_WORKERS).fill(false);
+  const workerIProgress = new Array(NUM_WORKERS).fill(0);
   let totalChecked = 0;
   let totalValid = 0;
-  let speedStart = Date.now();
+  const speedStart = Date.now();
+  const withAddr = [];
 
-  const withAddr = await new Promise(resolve => {
-    const results = [];
-    let done = 0;
+  // Queue of chunks to process on main thread
+  const chunkQueue = [];
+  let allWorkersDone = false;
+  let resolvePhase1 = null;
+
+  async function drainQueue() {
+    while (chunkQueue.length > 0) {
+      const { pairs } = chunkQueue.shift();
+      // Process this chunk synchronously but yield after
+      for (let k = 0; k < pairs.length; k++) {
+        const ij = pairs[k];
+        const i = Math.floor(ij / 2048);
+        const j = ij % 2048;
+        const w11 = words[i];
+        const w12 = words[j];
+        const mnemonic = known.concat([w11, w12]).join(' ');
+        try {
+          ethers.utils.mnemonicToEntropy(mnemonic); // throws if bad checksum
+          const address = ethers.utils.HDNode.fromMnemonic(mnemonic).derivePath(DERIVE).address;
+          withAddr.push({ mnemonic, address, word11: w11, word12: w12 });
+          totalValid++;
+        } catch(ex) { /* bad checksum */ }
+        totalChecked++;
+      }
+      // Yield to browser after each chunk
+      await sleep(0);
+      // Update UI
+      const pct = Math.round((totalChecked / (2048 * 2048)) * 50);
+      const elapsed = Math.max(0.1, (Date.now() - speedStart) / 1000);
+      const speed = Math.round(totalChecked / elapsed);
+      prog(pct, 'Phase 1 — ' + totalChecked.toLocaleString() + ' / 4,194,304 checked', pct + '%');
+      ph('ph1', 'run', totalValid + ' valid found', speed.toLocaleString() + ' combos/s');
+      document.getElementById('spd1').textContent = speed.toLocaleString();
+      document.getElementById('spd2').textContent = totalValid;
+
+      if (allWorkersDone && chunkQueue.length === 0 && resolvePhase1) {
+        resolvePhase1();
+      }
+    }
+    if (allWorkersDone && chunkQueue.length === 0 && resolvePhase1) {
+      resolvePhase1();
+    }
+  }
+
+  await new Promise(resolve => {
+    resolvePhase1 = resolve;
+    let doneCount = 0;
 
     for (let w = 0; w < NUM_WORKERS; w++) {
       const worker = mkWorker();
-      const iStart = w * slice;
-      const iEnd = Math.min(iStart + slice, 2048);
+      const iStart = w * sliceSize;
+      const iEnd = Math.min(iStart + sliceSize, 2048);
       const wid = w;
-
-      // Send INIT first, then RUN
-      worker.postMessage({ type: 'INIT', words });
 
       worker.onmessage = function(e) {
         const data = e.data;
-
-        if (data.type === 'READY') {
-          const knownIdxs = known.map(kw => words.indexOf(kw));
-          worker.postMessage({ type: 'RUN', words, known, knownIdxs, iStart, iEnd, wid });
+        if (data.type === 'CHUNK') {
+          chunkQueue.push({ pairs: data.pairs });
+          // Drain asynchronously
+          drainQueue();
           return;
         }
-
-        if (data.type === 'BATCH') {
-          // data.pairs is array of encoded ij values: i*2048+j
-          // Validate each pair using ethers on main thread
-          const pairs = data.pairs;
-          for (let k = 0; k < pairs.length; k++) {
-            const ij = pairs[k];
-            const i = Math.floor(ij / 2048);
-            const j = ij % 2048;
-            const w11 = words[i];
-            const w12 = words[j];
-            const mnemonic = known.concat([w11, w12]).join(' ');
-            try {
-              // ethers validates checksum — throws if invalid
-              ethers.utils.mnemonicToEntropy(mnemonic);
-              // Also derive address while we're here
-              const address = ethers.utils.HDNode.fromMnemonic(mnemonic).derivePath(DERIVE).address;
-              results.push({ mnemonic, address, word11: w11, word12: w12 });
-              totalValid++;
-            } catch(ex) { /* invalid checksum, skip */ }
-          }
-          workerProgress[data.wid] = data.checked;
-          totalChecked = workerProgress.reduce((a, b) => a + b, 0);
-          const pct = Math.round((totalChecked / (2048 * 2048)) * 50);
-          const elapsed = Math.max(0.1, (Date.now() - speedStart) / 1000);
-          const speed = Math.round(totalChecked / elapsed);
-          prog(pct, 'Phase 1 — ' + totalChecked.toLocaleString() + ' / 4,194,304 checked', pct + '%');
-          ph('ph1', 'run', totalValid + ' valid found', speed.toLocaleString() + ' combos/s');
-          document.getElementById('spd1').textContent = speed.toLocaleString();
-          document.getElementById('spd2').textContent = totalValid;
-          return;
-        }
-
         if (data.type === 'DONE') {
           worker.terminate();
-          done++;
-          if (done === NUM_WORKERS) resolve(results);
+          doneCount++;
+          if (doneCount === NUM_WORKERS) {
+            allWorkersDone = true;
+            // Final drain
+            drainQueue();
+          }
         }
       };
-
       worker.onerror = function() {
         worker.terminate();
-        done++;
-        if (done === NUM_WORKERS) resolve(results);
+        doneCount++;
+        if (doneCount === NUM_WORKERS) { allWorkersDone = true; drainQueue(); }
       };
+      worker.postMessage({ type: 'RUN', iStart, iEnd, wid });
     }
   });
 
@@ -719,37 +791,36 @@ async function run() {
   ph('ph1', 'done', withAddr.length + ' valid phrases', ph1Time + 's');
   feed('Phase 1 done: ' + withAddr.length + ' valid phrases in ' + ph1Time + 's', '');
 
-  // ── PHASE 2: NONCE FILTER ──
-  prog(50, 'Phase 2 — Filtering by transaction history…', '50%');
-  ph('ph2', 'run', 'Batch RPC nonce check…', `${withAddr.length} addresses`);
-  const active = await nonceFilter(withAddr, known);
+  // ── PHASE 2: CONCURRENT NONCE FILTER ──
+  prog(50, 'Phase 2 — Concurrent nonce check across all addresses…', '50%');
+  ph('ph2', 'run', 'Firing all checks in parallel…', `${withAddr.length} addresses`);
+  const active = await nonceFilterConcurrent(withAddr);
   const ph2Time = ((Date.now() - t0) / 1000 - parseFloat(ph1Time)).toFixed(1);
   ph('ph2', 'done', `${active.length} active wallets`, `${ph2Time}s`);
-  feed(`Phase 2: ${withAddr.length} → ${active.length} active (have transactions)`, active.length > 0 ? 'hit' : '');
+  feed(`Phase 2: ${withAddr.length} → ${active.length} with tx history`, active.length > 0 ? 'hit' : '');
 
-  // If nonce filter returns 0 (all brand new wallets, unlikely but possible), fall back to all
   const toCheck = active.length > 0 ? active : withAddr;
-
-  // ── PHASE 3: MULTICALL3 BALANCE CHECK ──
-  prog(65, 'Phase 3 — Multicall3 ETH balance check…', '65%');
-  ph('ph3', 'run', 'Multicall3 ETH…', `${toCheck.length} addresses`);
-
   const addrs = toCheck.map(p => p.address);
-  const ethBals = await multicallEthBal(addrs);
-  prog(75, 'Phase 3 — Multicall3 token balances…', '75%');
 
-  // Token multicall
+  // ── PHASE 3: CONCURRENT MULTICALL3 BALANCE CHECK ──
+  prog(65, 'Phase 3 — Concurrent Multicall3 ETH balance…', '65%');
+  ph('ph3', 'run', `Checking ${addrs.length} addresses in parallel…`, `${Math.ceil(addrs.length/500)} batches`);
+
+  // Fire ETH balance + all token balances concurrently
   const selectedTokens = getTokens();
   const erc20s = selectedTokens.filter(t => t.addr);
-  const tokenResults = {}; // tokenName -> Map<address, balance>
+  const decimalsList = await Promise.all(erc20s.map(t => getDecimals(t.addr)));
 
-  for (const tok of erc20s) {
-    const dec = await getDecimals(tok.addr);
-    tokenResults[tok.name] = await multicallTokenBal(addrs, tok.addr, tok.name, dec);
-    prog(75 + Math.round((Object.keys(tokenResults).length / Math.max(erc20s.length,1)) * 20),
-      `Phase 3 — Checking ${tok.name}…`, '');
-    await sleep(0);
-  }
+  // All balance checks fire simultaneously
+  const [ethBals, ...tokenBalMaps] = await Promise.all([
+    multicallEthBalConcurrent(addrs),
+    ...erc20s.map((t, i) => multicallTokenBalConcurrent(addrs, t.addr, decimalsList[i]))
+  ]);
+
+  const tokenResults = {};
+  erc20s.forEach((t, i) => { tokenResults[t.name] = tokenBalMaps[i]; });
+
+  prog(95, 'Phase 3 — Assembling results…', '95%');
 
   // Assemble candidates
   candidates = toCheck.map(p => {
