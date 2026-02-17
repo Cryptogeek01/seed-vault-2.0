@@ -250,9 +250,20 @@ body::after{content:'';position:fixed;inset:0;background-image:url("data:image/s
     <div class="card">
       <div class="card-head">
         <div class="card-title">Known Words (1–10)</div>
-        <button class="btn btn-g" style="padding:5px 10px;font-size:11px" onclick="clearW()">Clear</button>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-g" style="padding:5px 10px;font-size:11px" onclick="togglePaste()">⎘ Paste Seed</button>
+          <button class="btn btn-g" style="padding:5px 10px;font-size:11px" onclick="clearW()">Clear</button>
+        </div>
       </div>
       <div class="card-body">
+        <div id="pasteArea" style="display:none;margin-bottom:14px">
+          <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--t3);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:6px">Paste your seed phrase — first 10 words will be used, words 11 & 12 ignored</div>
+          <div style="display:flex;gap:8px">
+            <input id="pasteInput" class="ti" placeholder="word1 word2 word3 … word10" spellcheck="false" autocomplete="off" style="flex:1;font-size:13px;padding:10px 14px" oninput="previewPaste(this.value)" onkeydown="if(event.key==='Enter')applyPaste()"/>
+            <button class="btn btn-p" style="padding:10px 16px;font-size:12px;flex-shrink:0" onclick="applyPaste()">Apply</button>
+          </div>
+          <div id="pastePreview" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--t3);margin-top:7px;line-height:1.8"></div>
+        </div>
         <div class="word-grid" id="wgrid"></div>
         <div class="miss-row">
           <div class="miss-box"><div class="miss-n">WORD 11</div><div class="miss-q">?</div></div>
@@ -437,6 +448,45 @@ buildGrid();
 
 document.querySelectorAll('.tc').forEach(c => c.addEventListener('click', () => c.classList.toggle('on')));
 function clearW() { for (let i=1;i<=10;i++){const el=document.getElementById(`w${i}`);if(el){el.value='';el.className='';}} }
+
+// ── Paste seed phrase helpers ──
+function togglePaste() {
+  const area = document.getElementById('pasteArea');
+  const isOpen = area.style.display !== 'none';
+  area.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen) document.getElementById('pasteInput').focus();
+}
+
+function previewPaste(val) {
+  const words = val.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const preview = document.getElementById('pastePreview');
+  if (!words.length) { preview.textContent = ''; return; }
+  const take = words.slice(0, 10);
+  const colored = take.map((w, i) => {
+    const valid = BIP39W && BIP39W.includes(w);
+    const color = valid ? 'var(--green)' : 'var(--red)';
+    return `<span style="color:${color}">${i+1}:${w}</span>`;
+  }).join('  ');
+  const extra = words.length > 10 ? `  <span style="color:var(--t3)">(+${words.length-10} ignored)</span>` : '';
+  const count = `<span style="color:var(--t3)">${take.length}/10 words</span>  `;
+  preview.innerHTML = count + colored + extra;
+}
+
+function applyPaste() {
+  const val = document.getElementById('pasteInput').value.trim().toLowerCase();
+  const words = val.split(/\s+/).filter(Boolean).slice(0, 10);
+  if (!words.length) return;
+  words.forEach((w, i) => {
+    const inp = document.getElementById(`w${i+1}`);
+    if (!inp) return;
+    inp.value = w;
+    inp.className = BIP39W && BIP39W.includes(w) ? 'ok' : 'bad';
+  });
+  // Hide paste area after applying
+  document.getElementById('pasteArea').style.display = 'none';
+  document.getElementById('pasteInput').value = '';
+  document.getElementById('pastePreview').innerHTML = '';
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // WEB WORKER — inline via blob
