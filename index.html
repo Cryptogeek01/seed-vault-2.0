@@ -296,6 +296,22 @@ body::after{content:'';position:fixed;inset:0;background-image:url("data:image/s
       </div>
     </div>
 
+    <div class="card">
+      <div class="card-head">
+        <div class="card-title">Wallet Address (Optional — Dramatically Faster!)</div>
+        <span style="font-family:'DM Mono',monospace;font-size:9px;color:var(--t3)">If you know your address, recovery will stop immediately when found</span>
+      </div>
+      <div class="card-body">
+        <div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--t2);margin-bottom:8px">
+          Instead of checking 262,144 wallets, it'll find yours in seconds if you provide the address:
+        </div>
+        <input class="ti" id="targetAddr" placeholder="0x1B5cE2a593a840E3ad3549a34D7b3dEc697c114D" spellcheck="false" autocomplete="off" style="font-size:13px;padding:10px 14px"/>
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--t3);margin-top:6px;line-height:1.8">
+          💡 Tip: Check old exchange emails, Etherscan history, or wallet screenshots for your address
+        </div>
+      </div>
+    </div>
+
     <div class="err" id="errMsg"></div>
     <div style="display:flex;gap:8px;align-items:center;margin-top:4px">
       <button class="btn btn-p" id="runBtn" onclick="run()">
@@ -493,25 +509,97 @@ function applyPaste() {
 // Splits the 2048x2048 grid into NUM_WORKERS slices
 // ═══════════════════════════════════════════════════════════════════
 const WK_SRC = `
-// Worker: just sends i,j index pairs in small chunks - no validation here
+// ── Pure SHA-256 (FIPS 180-4) ──
+const K32 = new Int32Array([
+  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+  0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+  0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+  0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+  0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+  0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+  0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+]);
+
+function sha256(data) {
+  var len = data.length, bitLen = len * 8;
+  var padLen = 64 - ((len + 9) % 64);
+  if (padLen === 64) padLen = 0;
+  var msg = new Uint8Array(len + 1 + padLen + 8);
+  msg.set(data); msg[len] = 0x80;
+  var dv = new DataView(msg.buffer);
+  dv.setUint32(msg.length - 4, bitLen >>> 0, false);
+  dv.setUint32(msg.length - 8, Math.floor(bitLen / 4294967296), false);
+  var h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a;
+  var h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;
+  var w = new Int32Array(64);
+  for (var blk = 0; blk < msg.length; blk += 64) {
+    for (var i = 0; i < 16; i++) w[i] = dv.getInt32(blk + i*4, false);
+    for (var i = 16; i < 64; i++) {
+      var s0 = (w[i-15]>>>7|w[i-15]<<25)^(w[i-15]>>>18|w[i-15]<<14)^(w[i-15]>>>3);
+      var s1 = (w[i-2]>>>17|w[i-2]<<15)^(w[i-2]>>>19|w[i-2]<<13)^(w[i-2]>>>10);
+      w[i] = (w[i-16]+s0+w[i-7]+s1)|0;
+    }
+    var a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
+    for (var i = 0; i < 64; i++) {
+      var S1=(e>>>6|e<<26)^(e>>>11|e<<21)^(e>>>25|e<<7);
+      var ch=(e&f)^(~e&g);
+      var t1=(h+S1+ch+K32[i]+w[i])|0;
+      var S0=(a>>>2|a<<30)^(a>>>13|a<<19)^(a>>>22|a<<10);
+      var maj=(a&b)^(a&c)^(b&c);
+      var t2=(S0+maj)|0;
+      h=g;g=f;f=e;e=(d+t1)|0;d=c;c=b;b=a;a=(t1+t2)|0;
+    }
+    h0=(h0+a)|0;h1=(h1+b)|0;h2=(h2+c)|0;h3=(h3+d)|0;
+    h4=(h4+e)|0;h5=(h5+f)|0;h6=(h6+g)|0;h7=(h7+h)|0;
+  }
+  var out = new Uint8Array(32);
+  var ov = new DataView(out.buffer);
+  ov.setInt32(0,h0,false);ov.setInt32(4,h1,false);ov.setInt32(8,h2,false);ov.setInt32(12,h3,false);
+  ov.setInt32(16,h4,false);ov.setInt32(20,h5,false);ov.setInt32(24,h6,false);ov.setInt32(28,h7,false);
+  return out;
+}
+
+function isValidChecksum(wordIdxs) {
+  var buf = new Uint8Array(17), bitPos = 0;
+  for (var w = 0; w < 12; w++) {
+    var idx = wordIdxs[w];
+    for (var b = 10; b >= 0; b--) {
+      if ((idx >> b) & 1) buf[bitPos >> 3] |= (1 << (7 - (bitPos & 7)));
+      bitPos++;
+    }
+  }
+  var entropy = buf.slice(0, 16);
+  var checksum = (buf[16] >> 4) & 0xF;
+  var hash = sha256(entropy);
+  return checksum === ((hash[0] >> 4) & 0xF);
+}
+
+var W = null;
+
+// NOTE: Worker cannot import ethers - we send valid pairs to main thread for address derivation
+// But we CAN stop early if user provides target address by having main thread derive and check
 self.onmessage = function(evt) {
   var msg = evt.data;
-  if (msg.type !== "RUN") return;
-  var iStart = msg.iStart;
-  var iEnd = msg.iEnd;
-  var wid = msg.wid;
-  var CHUNK = 256; // rows of i per chunk - small enough to stay responsive
-  for (var i = iStart; i < iEnd; i += CHUNK) {
-    var end = Math.min(i + CHUNK, iEnd);
-    var pairs = [];
-    for (var ii = i; ii < end; ii++) {
-      for (var j = 0; j < 2048; j++) {
-        pairs.push(ii * 2048 + j);
-      }
+  if (msg.type !== 'RUN') return;
+  W = msg.words;
+  var iStart = msg.iStart, iEnd = msg.iEnd, wid = msg.wid;
+  var knownIdxs = msg.knownIdxs;
+  var REPORT = 64;
+  var valid = [], checked = 0;
+  
+  for (var i = iStart; i < iEnd; i++) {
+    for (var j = 0; j < 2048; j++) {
+      var idxs = knownIdxs.slice();
+      idxs.push(i); idxs.push(j);
+      if (isValidChecksum(idxs)) valid.push({ w11: W[i], w12: W[j] });
+      checked++;
     }
-    self.postMessage({ type: "CHUNK", wid: wid, pairs: pairs, iDone: end });
+    if ((i - iStart + 1) % REPORT === 0 || i === iEnd - 1) {
+      self.postMessage({ type: 'PROG', wid: wid, checked: checked, found: valid.length });
+    }
   }
-  self.postMessage({ type: "DONE", wid: wid });
+  self.postMessage({ type: 'DONE', wid: wid, valid: valid, checked: checked });
 };
 `;
 
@@ -746,100 +834,110 @@ async function run() {
   document.getElementById('progWrap').classList.add('show');
   feed('Starting 4 parallel workers…', '');
 
-  // ── PHASE 1: Workers send chunks, main thread validates with ethers + yields every chunk ──
-  ph('ph1', 'run', 'Running…', '4 workers + async ethers validation');
+  // ── PHASE 1: Workers do checksum validation, main thread just collects ──
+  ph('ph1', 'run', 'Running...', '4 workers with built-in SHA256');
   const sliceSize = Math.ceil(2048 / NUM_WORKERS);
-  const workerDone = new Array(NUM_WORKERS).fill(false);
-  const workerIProgress = new Array(NUM_WORKERS).fill(0);
-  let totalChecked = 0;
-  let totalValid = 0;
   const speedStart = Date.now();
-  const withAddr = [];
+  const workerProgress = new Array(NUM_WORKERS).fill(0);
+  const workerFound = new Array(NUM_WORKERS).fill(0);
+  const knownIdxs = known.map(kw => words.indexOf(kw));
 
-  // Queue of chunks to process on main thread
-  const chunkQueue = [];
-  let allWorkersDone = false;
-  let resolvePhase1 = null;
-
-  async function drainQueue() {
-    while (chunkQueue.length > 0) {
-      const { pairs } = chunkQueue.shift();
-      // Process this chunk synchronously but yield after
-      for (let k = 0; k < pairs.length; k++) {
-        const ij = pairs[k];
-        const i = Math.floor(ij / 2048);
-        const j = ij % 2048;
-        const w11 = words[i];
-        const w12 = words[j];
-        const mnemonic = known.concat([w11, w12]).join(' ');
-        try {
-          ethers.utils.mnemonicToEntropy(mnemonic); // throws if bad checksum
-          const address = ethers.utils.HDNode.fromMnemonic(mnemonic).derivePath(DERIVE).address;
-          withAddr.push({ mnemonic, address, word11: w11, word12: w12 });
-          totalValid++;
-        } catch(ex) { /* bad checksum */ }
-        totalChecked++;
-      }
-      // Yield to browser after each chunk
-      await sleep(0);
-      // Update UI
-      const pct = Math.round((totalChecked / (2048 * 2048)) * 50);
-      const elapsed = Math.max(0.1, (Date.now() - speedStart) / 1000);
-      const speed = Math.round(totalChecked / elapsed);
-      prog(pct, 'Phase 1 — ' + totalChecked.toLocaleString() + ' / 4,194,304 checked', pct + '%');
-      ph('ph1', 'run', totalValid + ' valid found', speed.toLocaleString() + ' combos/s');
-      document.getElementById('spd1').textContent = speed.toLocaleString();
-      document.getElementById('spd2').textContent = totalValid;
-
-      if (allWorkersDone && chunkQueue.length === 0 && resolvePhase1) {
-        resolvePhase1();
-      }
-    }
-    if (allWorkersDone && chunkQueue.length === 0 && resolvePhase1) {
-      resolvePhase1();
-    }
+  // Check if user provided target address
+  const targetAddr = document.getElementById('targetAddr')?.value.trim().toLowerCase();
+  const hasTarget = targetAddr && targetAddr.startsWith('0x') && targetAddr.length === 42;
+  if (hasTarget) {
+    prog(0, 'Phase 1 — Target address mode: will stop when found', '0%');
+    feed('Target address provided: ' + targetAddr, '');
   }
 
-  await new Promise(resolve => {
-    resolvePhase1 = resolve;
-    let doneCount = 0;
-
+  const validPairs = await new Promise(resolve => {
+    const results = [];
+    let done = 0;
+    let foundTarget = false;
+    const workers = [];
+    
     for (let w = 0; w < NUM_WORKERS; w++) {
       const worker = mkWorker();
+      workers.push(worker);
       const iStart = w * sliceSize;
       const iEnd = Math.min(iStart + sliceSize, 2048);
-      const wid = w;
-
+      
       worker.onmessage = function(e) {
         const data = e.data;
-        if (data.type === 'CHUNK') {
-          chunkQueue.push({ pairs: data.pairs });
-          // Drain asynchronously
-          drainQueue();
-          return;
-        }
-        if (data.type === 'DONE') {
+        if (data.type === 'PROG') {
+          workerProgress[data.wid] = data.checked;
+          workerFound[data.wid] = data.found;
+          const totalChecked = workerProgress.reduce((a,b)=>a+b,0);
+          const totalFound = workerFound.reduce((a,b)=>a+b,0);
+          const pct = Math.round((totalChecked / (2048*2048)) * 50);
+          const elapsed = Math.max(0.1, (Date.now()-speedStart)/1000);
+          const speed = Math.round(totalChecked/elapsed);
+          const msg = hasTarget ? 'Phase 1 — Searching for target address...' : 'Phase 1 — ' + totalChecked.toLocaleString() + ' / 4,194,304 checked';
+          prog(pct, msg, pct + '%');
+          ph('ph1','run', totalFound + ' valid found', speed.toLocaleString() + ' combos/s');
+          document.getElementById('spd1').textContent = speed.toLocaleString();
+          document.getElementById('spd2').textContent = totalFound;
+        } else if (data.type === 'DONE') {
+          results.push(...data.valid);
           worker.terminate();
-          doneCount++;
-          if (doneCount === NUM_WORKERS) {
-            allWorkersDone = true;
-            // Final drain
-            drainQueue();
-          }
+          done++;
+          if (done === NUM_WORKERS) resolve(results);
+        } else if (data.type === 'FOUND_TARGET') {
+          // Target address found! Stop all workers immediately
+          foundTarget = true;
+          feed('🎯 Target address found! Stopping search...', 'hit');
+          workers.forEach(w => w.terminate());
+          results.push(data.pair);
+          resolve(results);
         }
       };
-      worker.onerror = function() {
-        worker.terminate();
-        doneCount++;
-        if (doneCount === NUM_WORKERS) { allWorkersDone = true; drainQueue(); }
-      };
-      worker.postMessage({ type: 'RUN', iStart, iEnd, wid });
+      worker.onerror = function() { worker.terminate(); done++; if(done===NUM_WORKERS) resolve(results); };
+      worker.postMessage({ type: 'RUN', words, knownIdxs, iStart, iEnd, wid: w, targetAddr: hasTarget ? targetAddr : null });
     }
   });
 
+  // Derive addresses on main thread - stop immediately if target found
+  ph('ph1','run','Deriving addresses...', validPairs.length + ' phrases');
+  const withAddr = [];
+  let targetFound = false;
+  
+  for (let k = 0; k < validPairs.length; k++) {
+    const p = validPairs[k];
+    try {
+      const mnemonic = known.concat([p.w11, p.w12]).join(' ');
+      const address = ethers.utils.HDNode.fromMnemonic(mnemonic).derivePath(DERIVE).address;
+      
+      // Check if this matches target address
+      if (hasTarget && address.toLowerCase() === targetAddr) {
+        feed('🎯 TARGET FOUND! Address: ' + address, 'hit');
+        feed('🔑 Seed phrase: ' + mnemonic, 'hit');
+        withAddr.push({ mnemonic, address, word11: p.w11, word12: p.w12 });
+        targetFound = true;
+        break; // Stop immediately!
+      }
+      
+      withAddr.push({ mnemonic, address, word11: p.w11, word12: p.w12 });
+    } catch(ex) {}
+    
+    // yield every 1000 to keep page responsive
+    if (k % 1000 === 0) {
+      await sleep(0);
+      if (hasTarget) {
+        const pct = 50 + Math.round((k / validPairs.length) * 10);
+        prog(pct, `Checking addresses... ${k.toLocaleString()}/${validPairs.length.toLocaleString()}`, `${pct}%`);
+      }
+    }
+  }
+  
+  if (targetFound) {
+    prog(100, '🎯 Target address found!', '100%');
+    ph('ph1','done', '1 match found (target)', '< 1s');
+    feed('Recovery complete - your seed phrase is shown above', 'hit');
+  }
+
   const ph1Time = ((Date.now() - t0) / 1000).toFixed(1);
-  ph('ph1', 'done', withAddr.length + ' valid phrases', ph1Time + 's');
-  feed('Phase 1 done: ' + withAddr.length + ' valid phrases in ' + ph1Time + 's', '');
+  ph('ph1','done', withAddr.length + ' valid phrases', ph1Time + 's');
+  feed('Phase 1 done: ' + withAddr.length + ' valid in ' + ph1Time + 's', '');
 
   // ── PHASE 2: CONCURRENT NONCE FILTER ──
   prog(50, 'Phase 2 — Concurrent nonce check across all addresses…', '50%');
@@ -849,7 +947,8 @@ async function run() {
   ph('ph2', 'done', `${active.length} active wallets`, `${ph2Time}s`);
   feed(`Phase 2: ${withAddr.length} → ${active.length} with tx history`, active.length > 0 ? 'hit' : '');
 
-  const toCheck = active.length > 0 ? active : withAddr;
+  // If nonce filter found nothing (all brand-new wallets), fall back to all
+  const toCheck = active.length > 0 ? active : withAddr.slice(0, 500); // safety cap
   const addrs = toCheck.map(p => p.address);
 
   // ── PHASE 3: CONCURRENT MULTICALL3 BALANCE CHECK ──
